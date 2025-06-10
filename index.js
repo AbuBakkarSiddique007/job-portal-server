@@ -1,15 +1,45 @@
 require('dotenv').config()
 const express = require('express');
 const cors = require('cors')
+
+const jwt = require('jsonwebtoken')
+const cookieParser = require('cookie-parser');
+
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
 const app = express();
 const port = process.env.PORT || 5000;
 
 // Middleware:
-app.use(cors());
+app.use(cors({
+  origin: ['http://localhost:5173'],
+  credentials: true
+}));
+
 app.use(express.json())
 
+app.use(cookieParser())
+
+// const logger = (req, res, next) => {
+//   console.log("Output One.");
+//   next()
+// }
+
+const verifyToken = (req, res, next) => {
+  const token = req?.cookies?.token;
+
+  if (!token) {
+    return res.status(401).send({ message: 'Unauthorized Access.' })
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, decode) => {
+    if (err) {
+      return res.status(401).send({ message: 'UnAuthorized Access.' })
+    }
+    req.user = decode
+    next()
+  })
+}
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.p62hq.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
@@ -36,8 +66,25 @@ async function run() {
     const jobApplicationCollection = client.db('jobPortal').collection('jobApplications')
 
 
+    // Auth Related APIs:
+    app.post("/jwt", async (req, res) => {
+      const user = req.body;
+      const token = jwt.sign(user, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+      res
+        .cookie('token', token, {
+          httpOnly: true,
+          secure: false,
+        })
+        .send({ success: true });
+    });
+
+
+
     // Jobs related apis:
     app.get("/jobs", async (req, res) => {
+      // console.log("Output Two.");
+
 
       // For getting my posted Jobs only
       const email = req.query.email
@@ -66,14 +113,22 @@ async function run() {
 
 
     // Job Applications:
-    app.get('/job-applications', async (req, res) => {
+    app.get('/job-applications', verifyToken, async (req, res) => {
       const email = req.query.email
       const query = { application_email: email }
+
+      if (req.user.email !== req.params.email) {
+        return res.status(403).send({ message: 'Forbidden Access.' })
+      }
+
+      console.log("My cookie: ", req.cookies);
+
+
       const result = await jobApplicationCollection.find(query).toArray();
 
       // Not recommended:
       for (const application of result) {
-        console.log(application.job_id);
+        // console.log(application.job_id);
 
         const query1 = { _id: new ObjectId(application.job_id) }
         const job = await jobsCollection.findOne(query1)
